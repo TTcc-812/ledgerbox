@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+config.yaml
+data/
+inbox/*.zip
+inbox/*.csv
+inbox/*.xlsx
+inbox/*.xls
+!inbox/.gitkeep
+*.db
+.env

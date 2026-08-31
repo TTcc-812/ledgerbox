@@ -1,0 +1,40 @@
+# 复制为 config.yaml 后再填真实信息。不要把 config.yaml 提交到 Git。
+
+imap:
+  host: imap.qq.com          # 163: imap.163.com  Gmail: imap.gmail.com
+  port: 993
+  username: bills@example.com
+  # 邮箱「授权码 / 应用专用密码」，不是登录密码
+  password: ""
+  folder: INBOX
+  lookback_days: 14
+
+# 官方账单压缩包密码。留空则运行 fetch 时手动输入。
+zip_passwords:
+  wechat: ""
+  alipay: ""
+  cmb: ""
+
+transfers:
+  window_hours: 48
+  keywords:
+    - 支付宝
+    - 微信支付
+    - 微信零钱
+    - 零钱通
+    - 余额宝
+    - 招商银行
+    - 招行
+    - 储蓄卡
+    - 信用卡
+    - 转入
+    - 转出
+    - 充值
+    - 提现
+
+classify:
+  餐饮: [美团, 饿了么, 星巴克, 肯德基, 麦当劳, 瑞幸, 外卖, 食堂]
+  交通: [滴滴, 高德, 地铁, 公交, 铁路, 航旅, 加油]
+  购物: [淘宝, 天猫, 京东, 拼多多, 抖音电商, 唯品会]
+  居住: [房租, 电费, 水费, 燃气, 物业]
+  订阅: [苹果, Apple, 爱奇艺, 腾讯视频, iCloud]
