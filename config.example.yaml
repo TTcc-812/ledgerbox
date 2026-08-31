@@ -9,11 +9,19 @@ imap:
   folder: INBOX
   lookback_days: 14
 
-# 官方账单压缩包密码。留空则运行 fetch 时手动输入。
+# 官方账单压缩包密码。建议留空：缺密码时 sync 会进入 waiting_password，
+# 再通过 ledgerbox unlock 安全输入；若确实固定不变也可以配置在这里。
 zip_passwords:
   wechat: ""
   alipay: ""
   cmb: ""
+
+# 只读 HTTP API。默认仅监听本机，不会直接暴露到账本所在服务器公网。
+# 如果 host 改为 0.0.0.0 或其他非 loopback 地址，token 必须设置为高强度随机值。
+api:
+  host: 127.0.0.1
+  port: 8765
+  token: ""
 
 transfers:
   window_hours: 48
