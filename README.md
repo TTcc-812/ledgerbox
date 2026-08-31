@@ -1,72 +1,42 @@
 # 账单匣 LedgerBox
 
-基于 [aker-pc/BSync](https://github.com/aker-pc/BSync) 与 [edge-sky/Bills-save](https://github.com/edge-sky/Bills-save) 的邮箱账单流程，**重写并加固**后的个人账本。
+LedgerBox 是一个面向个人使用的微信 / 支付宝 / 招商银行账单归集工具。
 
-支持 **微信 / 支付宝 / 招商银行** 官方导出文件（邮箱附件或本地导入），自动：
-
-- 解析 CSV / XLSX
-- 识别内部转账（卡 ↔ 微信 ↔ 支付宝 不计收入/支出）
-- 写入本地 SQLite
-- 生成月度 Markdown 报告
-- 按邮件 Message-ID / IMAP UID 与附件 SHA-256 去重
-- 加密账单缺少密码时进入 `waiting_password`，不会阻塞后台同步
-- 提供本机只读 HTTP API，供 Dashboard 等前端读取统计和流水
-
-数据只落在你自己的电脑或服务器上。邮箱密码用授权码，不要用登录密码。
-
-## 安全说明（相对原项目修了什么）
-
-原 BSync 存在这些问题，本仓库已避开：
-
-| 问题 | 原项目 | 本仓库 |
-| --- | --- | --- |
-| SQL 拼接账单字段 | `INSERT ... VALUES ('{}')` | 参数化查询 |
-| Zip Slip | `extract` 不校验路径 | 拒绝 `..` / 绝对路径 |
-| 任意 URL 下载 | 从邮件 HTML 取链接直接 GET | 仅允许微信/支付宝/招行官方域名 |
-| 解压密码写进日志 | debug 打印密码 | 不记录密码；`unlock` 默认隐藏输入 |
-| 配置里的密钥被提交 | 示例路径写死本机 | `config.yaml` 已 gitignore，只用 example |
-| 无体积限制 | 无 | 附件与解压上限 20MB |
-| 重复拉取/重复附件 | 无状态 | Message-ID / UID + SHA-256 双层去重 |
-| Dashboard 直连账本 | 无边界 | 只读 API；默认仅监听 `127.0.0.1` |
-
-请仍只在可信环境运行，不要把 `config.yaml`、`data/`、`inbox/` 推到公开仓库。
-
-## 推荐流程
-
-1. 手机把微信 / 支付宝 / 招行流水发到**专用邮箱**（用于个人对账）。
-2. 服务器或电脑运行 `python -m ledgerbox sync`。
-3. LedgerBox 自动拉邮件、下载附件、解压可处理账单、解析、去重、标记内部转账、分类并生成本月报告。
-4. 如果某个 ZIP 需要临时密码，任务不会卡住；运行 `python -m ledgerbox status` 查看待处理附件，再用 `unlock` 补密码。
-5. Dashboard 通过 LedgerBox 只读 API 展示 SQLite 中的统一账本，不再自己保存一份流水。
-
-### 一键同步
-
-```bash
-python -m ledgerbox sync
-```
-
-适合后续放进 systemd timer / cron。重复运行是安全的：已处理邮件和相同附件会跳过，交易仍由交易 ID 做最终去重。
-
-### 查看待处理状态
-
-```bash
-python -m ledgerbox status
-```
-
-示例：
+现在整个流程都在一个项目里完成：
 
 ```text
-待处理附件：
-- a1b2c3d4e5f6  waiting_password  微信支付账单.zip  等待解压密码
+iPhone 申请官方账单
+        ↓
+      专用邮箱
+        ↓
+LedgerBox 邮箱采集
+        ↓
+下载 / 解压 / 去重 / 解析
+        ↓
+内部转账识别 / 分类
+        ↓
+      SQLite
+        ↓
+  内置 Dashboard
 ```
 
-### 补 ZIP 密码并继续导入
+支持：
 
-```bash
-python -m ledgerbox unlock a1b2c3d4e5f6
-```
-
-密码会以隐藏方式输入，不进入 shell history。也支持第二个参数直接传密码，但不推荐在长期使用的机器上这么做。
+- 微信 / 支付宝 / 招行官方账单
+- CSV / XLSX
+- IMAP 自动收取账单邮件
+- Message-ID / IMAP UID 邮件去重
+- SHA-256 附件去重
+- 加密 ZIP 安全解压
+- 缺少 ZIP 密码时进入 `waiting_password`，后台同步不会卡死
+- 内部转账配对剔除
+- 规则分类
+- SQLite 持久化
+- 月度 Markdown 报告
+- 内置 Web Dashboard
+- Dashboard 一键检查新账单
+- Dashboard 输入 ZIP 密码并继续导入
+- 月度汇总、分类支出、每日支出、流水分页、导入历史、待处理账单
 
 ## 安装
 
@@ -75,12 +45,103 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 cp config.example.yaml config.yaml
-# 编辑 config.yaml：邮箱 IMAP 授权码；固定解压密码可填，临时密码建议留空
 ```
 
-## 只读 HTTP API
+然后编辑 `config.yaml`，配置邮箱 IMAP 授权码。
 
-默认配置：
+> 邮箱请使用授权码 / 应用专用密码，不要填写邮箱登录密码。
+
+## 推荐使用方式
+
+### 1. iPhone 申请账单
+
+当你想看阶段性总结时，在手机上分别申请：
+
+**微信**  
+我 → 服务 → 钱包 → 账单 → 下载账单 → 用于个人对账 → 填专用邮箱。
+
+**支付宝**  
+我的 → 账单 → 开具交易流水证明 → 用于个人对账 → 填专用邮箱。
+
+**招商银行**  
+手机银行 → 流水打印 / 收支明细 → 填同一邮箱。
+
+### 2. 启动 Dashboard
+
+```bash
+python -m ledgerbox api
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8765/
+```
+
+打开以后可以直接：
+
+- 查看当月支出 / 收入 / 净额 / 内部转移
+- 查看分类支出和每日支出
+- 浏览真实账本流水
+- 查看最近导入邮件
+- 查看等待密码或失败的账单
+- 点击「检查新账单」执行一次完整邮箱同步
+- 对 `waiting_password` 的 ZIP 直接输入密码并继续导入
+
+不再需要额外的 React 前端项目，也不再使用浏览器 `localStorage` 保存账本。
+
+## 一键同步
+
+如果你只想通过 CLI：
+
+```bash
+python -m ledgerbox sync
+```
+
+执行：
+
+```text
+邮箱检查
+  ↓
+新邮件去重
+  ↓
+附件下载 / SHA-256 去重
+  ↓
+ZIP 解压
+  ↓
+解析
+  ↓
+内部转账匹配
+  ↓
+分类
+  ↓
+SQLite
+  ↓
+生成本月 Markdown 报告
+```
+
+重复运行是安全的。
+
+## ZIP 密码
+
+账单 ZIP 没有可用密码时不会阻塞同步，而会保存为：
+
+```text
+waiting_password
+```
+
+可以在 Dashboard 直接填写密码，也可以使用 CLI：
+
+```bash
+python -m ledgerbox status
+python -m ledgerbox unlock a1b2c3d4e5f6
+```
+
+CLI 默认隐藏密码输入，避免密码进入 shell history。
+
+## Dashboard / API 配置
+
+默认：
 
 ```yaml
 api:
@@ -89,101 +150,127 @@ api:
   token: ""
 ```
 
-启动：
+如果只在账本所在电脑访问，保持默认即可。
 
-```bash
-python -m ledgerbox api
+如果需要从 iPhone 或其他设备访问服务器上的 Dashboard，可以改为：
+
+```yaml
+api:
+  host: 0.0.0.0
+  port: 8765
+  token: "请使用高强度随机值"
 ```
 
-默认只接受同一台机器上的连接，适合让本机 Nginx / Node Server Function / Dashboard 后端代理读取。如果改成 `0.0.0.0` 或其他非 loopback 地址，LedgerBox 会强制要求配置 `api.token`。
+LedgerBox 对非 loopback 监听会强制要求 Token。
 
-接口：
+**不建议把 `http://服务器IP:8765` 直接裸露到公网。** 推荐放在 HTTPS 反向代理、VPN 或 Tailscale 后面。
+
+当配置了 Token，Dashboard 的「访问设置」可在当前浏览器会话中填写。Token 仅存在 `sessionStorage`，关闭会话后不会作为账本数据持久化。
+
+## HTTP 接口
+
+只读：
 
 ```text
 GET /health
 GET /api/summary?month=2026-08
-GET /api/transactions?month=2026-08&limit=200&offset=0
+GET /api/transactions?month=2026-08&limit=50&offset=0
 GET /api/imports?limit=50
 GET /api/pending
 ```
 
-设置 `api.token` 后，除 `/health` 外请求需要：
+操作：
 
 ```text
-Authorization: Bearer <token>
+POST /api/sync
+POST /api/unlock
 ```
 
-API 不返回邮箱授权码、ZIP 密码、附件本地路径等敏感配置。`/api/imports` 也不向 Dashboard 返回邮件发件人，仅保留主题、时间、处理状态和附件数。
+`/api/unlock` 请求：
 
-### Dashboard 推荐连接方式
+```json
+{
+  "sha256": "a1b2c3d4e5f6...",
+  "password": "账单解压密码"
+}
+```
 
-不要让浏览器 JavaScript 直接访问 LedgerBox API。推荐：
+Web 写操作有单实例锁；如果另一个同步 / 解锁正在执行，会返回冲突状态，避免重复并发处理同一批附件。
+
+API 不返回：
+
+- IMAP 授权码
+- ZIP 配置密码
+- 附件本地绝对路径
+- Dashboard 不需要的邮件发件人字段
+
+## 内部转账规则
+
+只有满足配对条件才记为「内部转移」：
+
+- 对方命中 `transfers.keywords`
+- 类型 / 描述含转账、充值、提现、转入、转出等
+- 金额相同
+- 时间差在配置窗口内，默认 48 小时
+- 不同平台
+- 收支方向相反
+
+这样不会仅凭“支付宝”“微信”等单个关键词把普通消费误标成内部转账。
+
+## 数据状态
+
+SQLite 主要包含：
 
 ```text
-Browser
-  ↓
-Dashboard Server Function / BFF
-  ↓  Authorization: Bearer ...
-LedgerBox 127.0.0.1:8765
-  ↓
-SQLite
+transactions
+mail_imports
+attachments
 ```
 
-这样 API Token 只保存在 Dashboard 服务端环境变量中，不进入浏览器 bundle。
+`mail_imports` 保存邮件处理状态；`attachments` 保存附件 hash 和处理状态，因此程序重启后仍能知道哪些账单已经处理、哪些还在等密码。
 
 ## 其他命令
 
 ```bash
-# 只从邮箱拉取新附件，不导入
+# 只拉新附件
 python -m ledgerbox fetch
 
-# 手动导入 inbox/ 或指定文件
+# 手动导入
 python -m ledgerbox import
 python -m ledgerbox import path/to/微信支付账单.xlsx
+
+# 状态
+python -m ledgerbox status
 
 # 月报
 python -m ledgerbox report
 python -m ledgerbox report --month 2026-08
 ```
 
-## 导出路径（发到同一邮箱）
+## 安全处理
 
-**微信**  
-我 → 服务 → 钱包 → 账单 → 下载账单 → **用于个人对账** → 填邮箱。解压密码在微信支付服务通知。
+相对原始账单采集思路，本项目额外处理了：
 
-**支付宝**  
-我的 → 账单 → 开具交易流水证明 → **用于个人对账** → 填邮箱。
+- SQL 参数化
+- Zip Slip 路径校验
+- 官方下载域名白名单
+- 附件 / 解压 20MB 上限
+- 密码不写日志
+- `config.yaml`、`data/`、`inbox/` 不提交 Git
+- 附件与邮件双层去重
+- 非本机 Dashboard 强制 Token
+- POST 操作串行化
+- HTTP 响应不返回内部异常堆栈
 
-**招商银行**  
-手机银行 → 流水打印 / 收支明细 → 填邮箱。提取码在申请记录。
-
-## 内部转账规则
-
-同时满足则记为「内部转移」，不计入净收支：
-
-- 对方命中 `config.yaml` 的 `transfers.keywords`（未配置时使用内置平台关键词）
-- 类型/描述包含：转账、充值、提现、转入、转出
-- 金额相同、时间差在配置的窗口内（默认 48 小时）
-- 必须是不同平台、收支方向相反的一对流水
-
-这样不会只凭“支付宝/微信”等单个关键词就把普通付款误标成内部转移。
-
-## 数据库状态
-
-除 `transactions` 外，SQLite 现在还记录：
-
-- `mail_imports`：邮件 Message-ID、IMAP UID、主题、处理状态、错误信息
-- `attachments`：附件 SHA-256、文件名、平台、处理状态、错误信息
-
-这些状态用于无人值守同步、重复执行和后续 Web 管理页面。
+仍建议只部署在自己可信的机器 / 服务器上。
 
 ## 致谢
 
-- [edge-sky/Bills-save](https://github.com/edge-sky/Bills-save)（MPL-2.0）邮箱拉取思路
-- [aker-pc/BSync](https://github.com/aker-pc/BSync) 解析与归档流程
+- `edge-sky/Bills-save`：邮箱账单采集思路
+- `aker-pc/BSync`：解析与归档流程参考
 
-本仓库代码为重写，不以复制原文件的方式分发。
+本仓库代码为重写实现。
 
-## 许可
+## License
 
-Mozilla Public License 2.0（与 Bills-save 兼容）
+Mozilla Public License 2.0
