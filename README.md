@@ -37,8 +37,93 @@ LedgerBox 邮箱采集
 - Dashboard 一键检查新账单
 - Dashboard 输入 ZIP 密码并继续导入
 - 月度汇总、分类支出、每日支出、流水分页、导入历史、待处理账单
+- Docker / Docker Compose 本地运行
 
-## 安装
+## Docker 本地运行（推荐）
+
+先准备配置文件：
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item config.example.yaml config.yaml
+```
+
+编辑 `config.yaml`，填写 IMAP 邮箱和授权码。Docker Compose 会在容器内监听 `0.0.0.0:8765`，但默认只发布到宿主机 `127.0.0.1:8765`，因此局域网和公网默认无法直接访问。
+
+启动：
+
+```bash
+docker compose up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+docker compose logs -f ledgerbox
+```
+
+打开：
+
+```text
+http://127.0.0.1:8765/
+```
+
+Compose 默认 API Token 为：
+
+```text
+local-dev-token
+```
+
+第一次打开 Dashboard 时，在「访问设置」里填这个 Token 即可。更推荐在项目目录创建 `.env`：
+
+```env
+LEDGERBOX_API_TOKEN=换成你自己的随机长字符串
+```
+
+再重新启动：
+
+```bash
+docker compose up -d
+```
+
+SQLite 和账单附件不会存在容器临时层，而是保存在 Docker named volumes：
+
+```text
+ledgerbox_data
+ledgerbox_inbox
+```
+
+因此重新 build / 删除容器不会自动丢账本。停止服务：
+
+```bash
+docker compose down
+```
+
+如果明确连数据也要删除：
+
+```bash
+docker compose down -v
+```
+
+> `down -v` 会删除 SQLite 和已下载账单，请谨慎使用。
+
+Docker 运行时支持：
+
+```text
+LEDGERBOX_ROOT=/var/lib/ledgerbox
+LEDGERBOX_CONFIG=/etc/ledgerbox/config.yaml
+LEDGERBOX_API_TOKEN=...
+```
+
+## Python 本地安装
+
+如果不使用 Docker：
 
 ```bash
 python3 -m venv .venv
@@ -68,9 +153,13 @@ cp config.example.yaml config.yaml
 
 ### 2. 启动 Dashboard
 
+Python 方式：
+
 ```bash
 python -m ledgerbox api
 ```
+
+Docker 方式已经由 `docker compose up -d` 启动。
 
 默认地址：
 
@@ -96,6 +185,12 @@ http://127.0.0.1:8765/
 
 ```bash
 python -m ledgerbox sync
+```
+
+Docker 中也可以执行：
+
+```bash
+docker compose exec ledgerbox python -m ledgerbox sync
 ```
 
 执行：
@@ -137,11 +232,18 @@ python -m ledgerbox status
 python -m ledgerbox unlock a1b2c3d4e5f6
 ```
 
+Docker：
+
+```bash
+docker compose exec ledgerbox python -m ledgerbox status
+docker compose exec ledgerbox python -m ledgerbox unlock a1b2c3d4e5f6
+```
+
 CLI 默认隐藏密码输入，避免密码进入 shell history。
 
 ## Dashboard / API 配置
 
-默认：
+Python 本机运行默认：
 
 ```yaml
 api:
@@ -152,6 +254,8 @@ api:
 
 如果只在账本所在电脑访问，保持默认即可。
 
+Docker Compose 会通过命令行覆盖监听地址为 `0.0.0.0`，并通过 `LEDGERBOX_API_TOKEN` 提供 Token；宿主机端口仍默认只绑定 `127.0.0.1`。
+
 如果需要从 iPhone 或其他设备访问服务器上的 Dashboard，可以改为：
 
 ```yaml
@@ -161,7 +265,7 @@ api:
   token: "请使用高强度随机值"
 ```
 
-LedgerBox 对非 loopback 监听会强制要求 Token。
+LedgerBox 对非 loopback 监听会强制要求 Token，也可以通过 `LEDGERBOX_API_TOKEN` 设置。
 
 **不建议把 `http://服务器IP:8765` 直接裸露到公网。** 推荐放在 HTTPS 反向代理、VPN 或 Tailscale 后面。
 
@@ -261,6 +365,7 @@ python -m ledgerbox report --month 2026-08
 - 非本机 Dashboard 强制 Token
 - POST 操作串行化
 - HTTP 响应不返回内部异常堆栈
+- Docker 默认仅把端口发布到宿主机 `127.0.0.1`
 
 仍建议只部署在自己可信的机器 / 服务器上。
 
