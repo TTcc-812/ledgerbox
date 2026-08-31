@@ -10,6 +10,7 @@
 - 生成月度 Markdown 报告
 - 按邮件 Message-ID / IMAP UID 与附件 SHA-256 去重
 - 加密账单缺少密码时进入 `waiting_password`，不会阻塞后台同步
+- 提供本机只读 HTTP API，供 Dashboard 等前端读取统计和流水
 
 数据只落在你自己的电脑或服务器上。邮箱密码用授权码，不要用登录密码。
 
@@ -26,6 +27,7 @@
 | 配置里的密钥被提交 | 示例路径写死本机 | `config.yaml` 已 gitignore，只用 example |
 | 无体积限制 | 无 | 附件与解压上限 20MB |
 | 重复拉取/重复附件 | 无状态 | Message-ID / UID + SHA-256 双层去重 |
+| Dashboard 直连账本 | 无边界 | 只读 API；默认仅监听 `127.0.0.1` |
 
 请仍只在可信环境运行，不要把 `config.yaml`、`data/`、`inbox/` 推到公开仓库。
 
@@ -35,6 +37,7 @@
 2. 服务器或电脑运行 `python -m ledgerbox sync`。
 3. LedgerBox 自动拉邮件、下载附件、解压可处理账单、解析、去重、标记内部转账、分类并生成本月报告。
 4. 如果某个 ZIP 需要临时密码，任务不会卡住；运行 `python -m ledgerbox status` 查看待处理附件，再用 `unlock` 补密码。
+5. Dashboard 通过 LedgerBox 只读 API 展示 SQLite 中的统一账本，不再自己保存一份流水。
 
 ### 一键同步
 
@@ -74,6 +77,59 @@ pip install -e .
 cp config.example.yaml config.yaml
 # 编辑 config.yaml：邮箱 IMAP 授权码；固定解压密码可填，临时密码建议留空
 ```
+
+## 只读 HTTP API
+
+默认配置：
+
+```yaml
+api:
+  host: 127.0.0.1
+  port: 8765
+  token: ""
+```
+
+启动：
+
+```bash
+python -m ledgerbox api
+```
+
+默认只接受同一台机器上的连接，适合让本机 Nginx / Node Server Function / Dashboard 后端代理读取。如果改成 `0.0.0.0` 或其他非 loopback 地址，LedgerBox 会强制要求配置 `api.token`。
+
+接口：
+
+```text
+GET /health
+GET /api/summary?month=2026-08
+GET /api/transactions?month=2026-08&limit=200&offset=0
+GET /api/imports?limit=50
+GET /api/pending
+```
+
+设置 `api.token` 后，除 `/health` 外请求需要：
+
+```text
+Authorization: Bearer <token>
+```
+
+API 不返回邮箱授权码、ZIP 密码、附件本地路径等敏感配置。`/api/imports` 也不向 Dashboard 返回邮件发件人，仅保留主题、时间、处理状态和附件数。
+
+### Dashboard 推荐连接方式
+
+不要让浏览器 JavaScript 直接访问 LedgerBox API。推荐：
+
+```text
+Browser
+  ↓
+Dashboard Server Function / BFF
+  ↓  Authorization: Bearer ...
+LedgerBox 127.0.0.1:8765
+  ↓
+SQLite
+```
+
+这样 API Token 只保存在 Dashboard 服务端环境变量中，不进入浏览器 bundle。
 
 ## 其他命令
 
