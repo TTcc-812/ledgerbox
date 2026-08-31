@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -256,9 +257,9 @@ def serve_api(cfg: dict, db_path: Path, host: str | None = None, port: int | Non
     api_cfg = cfg.get("api") if isinstance(cfg.get("api"), dict) else {}
     bind_host = host or str(api_cfg.get("host") or "127.0.0.1")
     bind_port = port or int(api_cfg.get("port") or 8765)
-    token = str(api_cfg.get("token") or "")
+    token = os.environ.get("LEDGERBOX_API_TOKEN") or str(api_cfg.get("token") or "")
     if bind_host not in LOOPBACK_HOSTS and not token:
-        raise SystemExit("Dashboard/API 监听非本机地址时必须配置 api.token，避免公开暴露个人账本。")
+        raise SystemExit("Dashboard/API 监听非本机地址时必须配置 api.token 或 LEDGERBOX_API_TOKEN，避免公开暴露个人账本。")
     server = LedgerApiServer((bind_host, bind_port), db_path, token, cfg)
     print(f"LedgerBox Dashboard: http://{bind_host}:{bind_port}/")
     try:
