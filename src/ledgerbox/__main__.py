@@ -5,229 +5,55 @@ import getpass
 from pathlib import Path
 
 from .api import serve_api
-from .classify import classify
-from .config import ROOT, load_config
-from .mail import MailAttachment, fetch_bills
-from .parsers import parse_file
-from .report import render_markdown, summarize
-from .store import (
-    attachments_with_status,
-    connect,
-    list_imports,
-    load_all,
-    record_attachment,
-    record_mail,
-    seen_attachment_hashes,
-    seen_message_ids,
-    set_attachment_status,
-    upsert,
-)
-from .transfers import mark_transfers
-from .unzip import UnsafeArchive, extract_archive
-
-INBOX = ROOT / "inbox"
-DATA = ROOT / "data"
-DB = DATA / "ledger.db"
-EXTRACTED = INBOX / "extracted"
-
-
-def _passwords(cfg: dict) -> dict[str, str]:
-    return {str(k): str(v) for k, v in dict(cfg.get("zip_passwords") or {}).items() if v}
-
-
-def _platform_from_name(name: str) -> str:
-    lower = name.lower()
-    if "ali" in lower or "支付宝" in name:
-        return "alipay"
-    if "cmb" in lower or "招商" in name or "招行" in name:
-        return "cmb"
-    return "wechat"
-
-
-def _import_paths(paths: list[Path], cfg: dict) -> int:
-    DATA.mkdir(parents=True, exist_ok=True)
-    txns = []
-    for p in paths:
-        if p.suffix.lower() == ".zip":
-            continue
-        if p.suffix.lower() not in {".csv", ".xlsx"}:
-            continue
-        txns.extend(parse_file(p))
-    if not txns:
-        return 0
-    rules = cfg.get("classify") if isinstance(cfg.get("classify"), dict) else None
-    keywords = (cfg.get("transfers") or {}).get("keywords")
-    window = int((cfg.get("transfers") or {}).get("window_hours") or 48)
-    mark_transfers(txns, keywords=keywords, window_hours=window)
-    classify(txns, rules=rules)
-    con = connect(DB)
-    n = upsert(con, txns)
-    con.close()
-    return n
-
-
-def _record_fetch(con, attachments: list[MailAttachment], mails: list[dict]) -> None:
-    by_message: dict[str, int] = {}
-    for item in attachments:
-        by_message[item.message_id] = by_message.get(item.message_id, 0) + 1
-        record_attachment(
-            con,
-            sha256=item.sha256,
-            message_id=item.message_id,
-            filename=item.path.name,
-            path=str(item.path),
-            platform=_platform_from_name(item.path.name),
-            status="fetched",
-        )
-    for mail in mails:
-        message_id = str(mail["message_id"])
-        status = str(mail.get("status") or "fetched")
-        if status == "duplicate":
-            continue
-        if by_message.get(message_id, 0) == 0:
-            status = "processed"
-        record_mail(
-            con,
-            message_id=message_id,
-            imap_uid=str(mail.get("imap_uid") or ""),
-            sender=str(mail.get("sender") or ""),
-            subject=str(mail.get("subject") or ""),
-            received_at=str(mail.get("received_at") or ""),
-            status=status,
-        )
-
-
-def _fetch(cfg: dict, con) -> list[MailAttachment]:
-    INBOX.mkdir(parents=True, exist_ok=True)
-    attachments, mails = fetch_bills(
-        cfg,
-        INBOX,
-        seen_messages=seen_message_ids(con),
-        seen_hashes=seen_attachment_hashes(con),
-    )
-    _record_fetch(con, attachments, mails)
-    return attachments
-
-
-def _process_attachment(con, row: dict, cfg: dict, password_override: str | None = None) -> int:
-    path = Path(str(row["path"]))
-    digest = str(row["sha256"])
-    if not path.exists():
-        set_attachment_status(con, digest, "error", error="附件文件不存在")
-        return 0
-
-    if path.suffix.lower() == ".zip":
-        platform = str(row.get("platform") or _platform_from_name(path.name))
-        password = password_override or _passwords(cfg).get(platform)
-        if not password:
-            set_attachment_status(con, digest, "waiting_password", error="等待解压密码", platform=platform)
-            return 0
-        try:
-            paths = extract_archive(path, EXTRACTED / digest[:12], password)
-        except UnsafeArchive as exc:
-            set_attachment_status(con, digest, "error", error=str(exc), platform=platform)
-            return 0
-        except (RuntimeError, ValueError) as exc:
-            set_attachment_status(con, digest, "waiting_password", error=f"解压失败，请确认密码：{exc}", platform=platform)
-            return 0
-        n = _import_paths(paths, cfg)
-        set_attachment_status(con, digest, "imported", error=None, platform=platform)
-        return n
-
-    try:
-        n = _import_paths([path], cfg)
-    except Exception as exc:
-        set_attachment_status(con, digest, "error", error=f"解析失败：{exc}")
-        return 0
-    set_attachment_status(con, digest, "imported" if n else "empty", error=None)
-    return n
-
-
-def _refresh_mail_statuses(con) -> None:
-    rows = con.execute(
-        """
-        SELECT m.message_id,
-               SUM(CASE WHEN a.status IN ('fetched', 'waiting_password') THEN 1 ELSE 0 END) AS pending,
-               SUM(CASE WHEN a.status = 'error' THEN 1 ELSE 0 END) AS errors,
-               COUNT(a.sha256) AS total
-        FROM mail_imports m
-        LEFT JOIN attachments a ON a.message_id = m.message_id
-        GROUP BY m.message_id
-        """
-    ).fetchall()
-    for row in rows:
-        if int(row["pending"] or 0) > 0:
-            waiting = con.execute(
-                "SELECT 1 FROM attachments WHERE message_id=? AND status='waiting_password' LIMIT 1",
-                (row["message_id"],),
-            ).fetchone()
-            status = "waiting_password" if waiting else "fetched"
-        elif int(row["errors"] or 0) > 0:
-            status = "error"
-        elif int(row["total"] or 0) > 0:
-            status = "processed"
-        else:
-            continue
-        con.execute(
-            "UPDATE mail_imports SET status=?, updated_at=datetime('now'), processed_at=CASE WHEN ?='processed' THEN datetime('now') ELSE processed_at END WHERE message_id=?",
-            (status, status, row["message_id"]),
-        )
-    con.commit()
-
-
-def _write_report(con, month: str | None = None) -> Path:
-    txns = load_all(con)
-    summary = summarize(txns, month)
-    text = render_markdown(summary)
-    DATA.mkdir(parents=True, exist_ok=True)
-    out = DATA / f"report-{summary['month']}.md"
-    out.write_text(text, encoding="utf-8")
-    return out
+from .config import load_config
+from .pipeline import DB, EXTRACTED, INBOX, import_paths, sync_once, unlock_pending, write_report
+from .store import attachments_with_status, connect, list_imports
 
 
 def cmd_fetch(cfg: dict) -> None:
+    from .pipeline import fetch_new
+
     con = connect(DB)
-    attachments = _fetch(cfg, con)
-    con.close()
+    try:
+        attachments = fetch_new(cfg, con)
+    finally:
+        con.close()
     print(f"新增拉取 {len(attachments)} 个附件到 inbox/")
 
 
 def cmd_sync(cfg: dict) -> None:
-    con = connect(DB)
-    attachments = _fetch(cfg, con)
-    imported = 0
-    for row in attachments_with_status(con, "fetched"):
-        imported += _process_attachment(con, row, cfg)
-    _refresh_mail_statuses(con)
-    report = _write_report(con)
-    waiting = len(attachments_with_status(con, "waiting_password"))
-    con.close()
-    print(f"同步完成：新增附件 {len(attachments)}，写入/更新流水 {imported}，等待密码 {waiting}")
-    print(f"月报：{report}")
+    result = sync_once(cfg)
+    print(
+        "同步完成："
+        f"新增附件 {result['new_attachments']}，"
+        f"写入/更新流水 {result['imported']}，"
+        f"等待密码 {result['waiting_password']}，"
+        f"失败 {result['errors']}"
+    )
+    print(f"月报：{result['report']}")
 
 
 def cmd_unlock(cfg: dict, digest: str, password: str | None) -> None:
-    con = connect(DB)
-    matches = [r for r in attachments_with_status(con, "waiting_password", "error") if str(r["sha256"]).startswith(digest)]
-    if not matches:
-        con.close()
-        raise SystemExit("没有找到对应的待解压附件。可先运行 ledgerbox status。")
-    if len(matches) > 1:
-        con.close()
-        raise SystemExit("哈希前缀匹配到多个附件，请提供更长的哈希。")
     secret = password or getpass.getpass("账单压缩包密码: ")
-    n = _process_attachment(con, matches[0], cfg, password_override=secret)
-    _refresh_mail_statuses(con)
-    report = _write_report(con)
-    con.close()
-    print(f"解锁完成，写入/更新流水 {n} 条；月报：{report}")
+    try:
+        result = unlock_pending(cfg, digest, secret)
+    except (LookupError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(
+        f"解锁结果：{result['status']}，"
+        f"写入/更新流水 {result['imported']} 条；月报：{result['report']}"
+    )
+    if result.get("error"):
+        print(f"提示：{result['error']}")
 
 
 def cmd_status() -> None:
     con = connect(DB)
-    waiting = attachments_with_status(con, "waiting_password", "error")
-    imports = list_imports(con, limit=20)
-    con.close()
+    try:
+        waiting = attachments_with_status(con, "waiting_password", "error")
+        imports = list_imports(con, limit=20)
+    finally:
+        con.close()
     if waiting:
         print("待处理附件：")
         for row in waiting:
@@ -251,7 +77,7 @@ def cmd_import(cfg: dict, extra: list[str]) -> None:
     paths = [p for p in paths if p.is_file()]
     if not paths:
         raise SystemExit("没有可导入的文件。把账单放到 inbox/ 或传入路径。")
-    n = _import_paths(paths, cfg)
+    n = import_paths(paths, cfg)
     print(f"写入/更新 {n} 条 → {DB}")
 
 
@@ -259,9 +85,11 @@ def cmd_report(month: str | None) -> None:
     if not DB.exists():
         raise SystemExit("还没有账本，先 import 或 sync。")
     con = connect(DB)
-    out = _write_report(con, month)
-    text = out.read_text(encoding="utf-8")
-    con.close()
+    try:
+        out = write_report(con, month)
+        text = out.read_text(encoding="utf-8")
+    finally:
+        con.close()
     print(text)
     print(f"已写入 {out}")
 
@@ -272,16 +100,21 @@ def main() -> None:
     sub.add_parser("fetch", help="从邮箱拉取新附件，不导入")
     sub.add_parser("sync", help="拉取新邮件、解压、导入并生成月报")
     sub.add_parser("status", help="查看等待密码/失败附件与最近导入")
+
     p_unlock = sub.add_parser("unlock", help="为待解压账单提供密码并继续导入")
     p_unlock.add_argument("sha256", help="status 中显示的附件哈希前缀")
     p_unlock.add_argument("password", nargs="?", help="可省略；省略时安全提示输入，避免进入 shell history")
+
     p_imp = sub.add_parser("import", help="解析并入库")
     p_imp.add_argument("files", nargs="*")
+
     p_rep = sub.add_parser("report", help="生成月报")
     p_rep.add_argument("--month", help="YYYY-MM")
-    p_api = sub.add_parser("api", help="启动只读 HTTP API，默认仅监听 127.0.0.1")
+
+    p_api = sub.add_parser("api", help="启动 Dashboard + HTTP API，默认仅监听 127.0.0.1")
     p_api.add_argument("--host", help="覆盖 config.yaml 的 api.host")
     p_api.add_argument("--port", type=int, help="覆盖 config.yaml 的 api.port")
+
     args = parser.parse_args()
     cfg = load_config()
     if args.cmd == "fetch":
