@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 
 from .parsers import Txn
 
-PLATFORM_PAYEE = re.compile(r"支付宝|微信支付|微信零钱|零钱通|余额宝|财付通")
-TRANSFER_TYPE = re.compile(r"转账|充值|提现|转入|转出")
+DEFAULT_PAYEE_KEYWORDS = ["支付宝", "微信支付", "微信零钱", "零钱通", "余额宝", "财付通", "招商银行", "招行", "储蓄卡", "信用卡"]
+DEFAULT_TYPE_KEYWORDS = ["转账", "充值", "提现", "转入", "转出"]
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -19,17 +19,23 @@ def _parse_dt(value: str) -> datetime | None:
             return None
 
 
-def is_transfer_shaped(txn: Txn) -> bool:
+def _matches_any(text: str, keywords: list[str]) -> bool:
+    return any(k and k in text for k in keywords)
+
+
+def is_transfer_shaped(txn: Txn, keywords: list[str] | None = None) -> bool:
+    configured = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    payee_keywords = configured or DEFAULT_PAYEE_KEYWORDS
+    type_keywords = DEFAULT_TYPE_KEYWORDS
     payee = f"{txn.counterparty} {txn.description}"
-    typed = bool(TRANSFER_TYPE.search(f"{txn.raw_type} {txn.description}"))
-    return bool(PLATFORM_PAYEE.search(payee) and typed)
+    typed_blob = f"{txn.raw_type} {txn.description}"
+    return _matches_any(payee, payee_keywords) and _matches_any(typed_blob, type_keywords)
 
 
 def mark_transfers(txns: list[Txn], keywords: list[str] | None = None, window_hours: int = 48) -> list[Txn]:
-    del keywords  # pairing only; keywords kept for call-site compatibility
     window = timedelta(hours=window_hours)
     used: set[str] = set()
-    pool = [t for t in txns if t.direction in ("支出", "收入") and is_transfer_shaped(t)]
+    pool = [t for t in txns if t.direction in ("支出", "收入") and is_transfer_shaped(t, keywords)]
     for a in pool:
         if a.id in used:
             continue
