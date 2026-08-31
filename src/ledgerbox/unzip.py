@@ -6,7 +6,7 @@ from pathlib import Path
 import pyzipper
 
 MAX_UNCOMPRESSED = 20 * 1024 * 1024
-ALLOWED_SUFFIX = {".csv", ".xlsx", ".xls"}
+ALLOWED_SUFFIX = {".csv", ".xlsx"}
 
 
 class UnsafeArchive(RuntimeError):
@@ -42,7 +42,7 @@ def extract_archive(archive: Path, dest: Path, password: str | None) -> list[Pat
             total += size
             if total > MAX_UNCOMPRESSED:
                 raise UnsafeArchive("解压体积超过 20MB 上限")
-            target = dest / member.name  # flatten, ignore nested dirs
+            target = dest / member.name
             data = zf.read(info, pwd=pwd) if pwd else zf.read(info)
             if len(data) > MAX_UNCOMPRESSED:
                 raise UnsafeArchive("单文件过大")
