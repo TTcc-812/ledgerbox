@@ -7,6 +7,7 @@ from pathlib import Path
 from ledgerbox.api import _imports, _jsonable_summary, _pending, _transactions
 from ledgerbox.parsers import Txn
 from ledgerbox.store import connect, record_attachment, record_mail, upsert
+from ledgerbox.web import DASHBOARD_HTML
 
 
 class ApiDataTests(unittest.TestCase):
@@ -68,6 +69,15 @@ class ApiDataTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertNotIn("path", pending[0])
         self.assertEqual(pending[0]["status"], "waiting_password")
+
+    def test_dashboard_contains_real_api_workflow(self) -> None:
+        self.assertIn("账单匣", DASHBOARD_HTML)
+        self.assertIn("/api/summary", DASHBOARD_HTML)
+        self.assertIn("/api/transactions", DASHBOARD_HTML)
+        self.assertIn("/api/sync", DASHBOARD_HTML)
+        self.assertIn("/api/unlock", DASHBOARD_HTML)
+        self.assertIn("sessionStorage", DASHBOARD_HTML)
+        self.assertNotIn("localStorage", DASHBOARD_HTML)
 
 
 if __name__ == "__main__":
