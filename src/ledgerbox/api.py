@@ -168,7 +168,8 @@ class LedgerApiHandler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "data": _pending(self.server.db_path)})
                 return
         except Exception as exc:
-            self._send(500, {"ok": False, "error": f"internal_error: {exc}"})
+            print(f"[api] request failed for {parsed.path}: {type(exc).__name__}: {exc}")
+            self._send(500, {"ok": False, "error": "internal_error"})
             return
         self._send(404, {"ok": False, "error": "not_found"})
 
