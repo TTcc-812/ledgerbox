@@ -10,14 +10,15 @@ imap:
   lookback_days: 14
 
 # 官方账单压缩包密码。建议留空：缺密码时 sync 会进入 waiting_password，
-# 再通过 ledgerbox unlock 安全输入；若确实固定不变也可以配置在这里。
+# 可直接在 Dashboard 中输入；若确实固定不变也可以配置在这里。
 zip_passwords:
   wechat: ""
   alipay: ""
   cmb: ""
 
-# 只读 HTTP API。默认仅监听本机，不会直接暴露到账本所在服务器公网。
-# 如果 host 改为 0.0.0.0 或其他非 loopback 地址，token 必须设置为高强度随机值。
+# Dashboard + HTTP API。
+# 默认仅监听本机。若改为 0.0.0.0 或其他非 loopback 地址，token 必须使用高强度随机值，
+# 并建议放在 HTTPS 反向代理 / VPN / Tailscale 后面，不要裸露 HTTP 到公网。
 api:
   host: 127.0.0.1
   port: 8765
