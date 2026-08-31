@@ -4,10 +4,10 @@ __pycache__/
 .DS_Store
 config.yaml
 data/
-inbox/*.zip
-inbox/*.csv
-inbox/*.xlsx
-inbox/*.xls
+inbox/**/*.zip
+inbox/**/*.csv
+inbox/**/*.xlsx
+inbox/extracted/
 !inbox/.gitkeep
 *.db
 .env
