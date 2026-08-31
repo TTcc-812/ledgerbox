@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
+import getpass
 from pathlib import Path
 
 from .classify import classify
@@ -43,14 +43,6 @@ def _platform_from_name(name: str) -> str:
     return "wechat"
 
 
-def _file_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def _import_paths(paths: list[Path], cfg: dict) -> int:
     DATA.mkdir(parents=True, exist_ok=True)
     txns = []
@@ -89,7 +81,9 @@ def _record_fetch(con, attachments: list[MailAttachment], mails: list[dict]) -> 
     for mail in mails:
         message_id = str(mail["message_id"])
         status = str(mail.get("status") or "fetched")
-        if status != "duplicate" and by_message.get(message_id, 0) == 0:
+        if status == "duplicate":
+            continue
+        if by_message.get(message_id, 0) == 0:
             status = "processed"
         record_mail(
             con,
@@ -162,10 +156,11 @@ def _refresh_mail_statuses(con) -> None:
     ).fetchall()
     for row in rows:
         if int(row["pending"] or 0) > 0:
-            status = "waiting_password" if con.execute(
+            waiting = con.execute(
                 "SELECT 1 FROM attachments WHERE message_id=? AND status='waiting_password' LIMIT 1",
                 (row["message_id"],),
-            ).fetchone() else "fetched"
+            ).fetchone()
+            status = "waiting_password" if waiting else "fetched"
         elif int(row["errors"] or 0) > 0:
             status = "error"
         elif int(row["total"] or 0) > 0:
@@ -210,7 +205,7 @@ def cmd_sync(cfg: dict) -> None:
     print(f"月报：{report}")
 
 
-def cmd_unlock(cfg: dict, digest: str, password: str) -> None:
+def cmd_unlock(cfg: dict, digest: str, password: str | None) -> None:
     con = connect(DB)
     matches = [r for r in attachments_with_status(con, "waiting_password", "error") if str(r["sha256"]).startswith(digest)]
     if not matches:
@@ -219,7 +214,8 @@ def cmd_unlock(cfg: dict, digest: str, password: str) -> None:
     if len(matches) > 1:
         con.close()
         raise SystemExit("哈希前缀匹配到多个附件，请提供更长的哈希。")
-    n = _process_attachment(con, matches[0], cfg, password_override=password)
+    secret = password or getpass.getpass("账单压缩包密码: ")
+    n = _process_attachment(con, matches[0], cfg, password_override=secret)
     _refresh_mail_statuses(con)
     report = _write_report(con)
     con.close()
@@ -277,7 +273,7 @@ def main() -> None:
     sub.add_parser("status", help="查看等待密码/失败附件与最近导入")
     p_unlock = sub.add_parser("unlock", help="为待解压账单提供密码并继续导入")
     p_unlock.add_argument("sha256", help="status 中显示的附件哈希前缀")
-    p_unlock.add_argument("password", help="账单压缩包密码")
+    p_unlock.add_argument("password", nargs="?", help="可省略；省略时安全提示输入，避免进入 shell history")
     p_imp = sub.add_parser("import", help="解析并入库")
     p_imp.add_argument("files", nargs="*")
     p_rep = sub.add_parser("report", help="生成月报")
