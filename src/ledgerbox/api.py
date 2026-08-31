@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,7 @@ class LedgerApiServer(ThreadingHTTPServer):
         self.db_path = db_path
         self.api_token = token
         self.cfg = cfg
+        self.action_lock = threading.Lock()
 
 
 class LedgerApiHandler(BaseHTTPRequestHandler):
@@ -215,6 +217,9 @@ class LedgerApiHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_json(401, {"ok": False, "error": "unauthorized"})
             return
+        if not self.server.action_lock.acquire(blocking=False):
+            self._send_json(409, {"ok": False, "error": "another_action_is_running"})
+            return
         try:
             payload = self._read_json()
             if parsed.path == "/api/sync":
@@ -242,6 +247,8 @@ class LedgerApiHandler(BaseHTTPRequestHandler):
             print(f"[api] action failed for {parsed.path}: {type(exc).__name__}: {exc}")
             self._send_json(500, {"ok": False, "error": "internal_error"})
             return
+        finally:
+            self.server.action_lock.release()
         self._send_json(404, {"ok": False, "error": "not_found"})
 
 
