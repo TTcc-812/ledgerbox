@@ -4,6 +4,7 @@ import argparse
 import getpass
 from pathlib import Path
 
+from .api import serve_api
 from .classify import classify
 from .config import ROOT, load_config
 from .mail import MailAttachment, fetch_bills
@@ -278,6 +279,9 @@ def main() -> None:
     p_imp.add_argument("files", nargs="*")
     p_rep = sub.add_parser("report", help="生成月报")
     p_rep.add_argument("--month", help="YYYY-MM")
+    p_api = sub.add_parser("api", help="启动只读 HTTP API，默认仅监听 127.0.0.1")
+    p_api.add_argument("--host", help="覆盖 config.yaml 的 api.host")
+    p_api.add_argument("--port", type=int, help="覆盖 config.yaml 的 api.port")
     args = parser.parse_args()
     cfg = load_config()
     if args.cmd == "fetch":
@@ -292,6 +296,8 @@ def main() -> None:
         cmd_import(cfg, args.files)
     elif args.cmd == "report":
         cmd_report(args.month)
+    elif args.cmd == "api":
+        serve_api(cfg, DB, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
