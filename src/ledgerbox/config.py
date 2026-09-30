@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-ROOT = Path.cwd()
+
+def _resolve_path(value: str | None, fallback: Path) -> Path:
+    path = Path(value).expanduser() if value else fallback
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
+ROOT = _resolve_path(os.environ.get("LEDGERBOX_ROOT"), Path.cwd())
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    cfg_path = path or ROOT / "config.yaml"
+    env_path = os.environ.get("LEDGERBOX_CONFIG")
+    cfg_path = path or _resolve_path(env_path, ROOT / "config.yaml")
     example = Path(__file__).resolve().parents[2] / "config.example.yaml"
     if not cfg_path.exists():
         if example.exists():

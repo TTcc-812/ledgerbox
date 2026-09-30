@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+.env
+config.yaml
+data
+inbox
+samples
+screenshots

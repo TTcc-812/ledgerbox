@@ -1,91 +1,381 @@
 # 账单匣 LedgerBox
 
-基于 [aker-pc/BSync](https://github.com/aker-pc/BSync) 与 [edge-sky/Bills-save](https://github.com/edge-sky/Bills-save) 的邮箱账单流程，**重写并加固**后的个人账本。
+LedgerBox 是一个面向个人使用的微信 / 支付宝 / 招商银行账单归集工具。
 
-支持 **微信 / 支付宝 / 招商银行** 官方导出文件（邮箱附件或本地导入），自动：
+现在整个流程都在一个项目里完成：
 
-- 解析 CSV / XLSX
-- 识别内部转账（卡 ↔ 微信 ↔ 支付宝 不计收入/支出）
-- 写入本地 SQLite
-- 生成月度 Markdown 报告
+```text
+iPhone 申请官方账单
+        ↓
+      专用邮箱
+        ↓
+LedgerBox 邮箱采集
+        ↓
+下载 / 解压 / 去重 / 解析
+        ↓
+内部转账识别 / 分类
+        ↓
+      SQLite
+        ↓
+  内置 Dashboard
+```
 
-数据只落在你自己的电脑上。邮箱密码用授权码，不要用登录密码。
+支持：
 
-## 安全说明（相对原项目修了什么）
+- 微信 / 支付宝 / 招行官方账单
+- CSV / XLSX
+- IMAP 自动收取账单邮件
+- Message-ID / IMAP UID 邮件去重
+- SHA-256 附件去重
+- 加密 ZIP 安全解压
+- 缺少 ZIP 密码时进入 `waiting_password`，后台同步不会卡死
+- 内部转账配对剔除
+- 规则分类
+- SQLite 持久化
+- 月度 Markdown 报告
+- 内置 Web Dashboard
+- Dashboard 一键检查新账单
+- Dashboard 输入 ZIP 密码并继续导入
+- 月度汇总、分类支出、每日支出、流水分页、导入历史、待处理账单
+- Docker / Docker Compose 本地运行
 
-原 BSync 存在这些问题，本仓库已避开：
+## Docker 本地运行（推荐）
 
-| 问题 | 原项目 | 本仓库 |
-| --- | --- | --- |
-| SQL 拼接账单字段 | `INSERT ... VALUES ('{}')` | 参数化查询 |
-| Zip Slip | `extract` 不校验路径 | 拒绝 `..` / 绝对路径 |
-| 任意 URL 下载 | 从邮件 HTML 取链接直接 GET | 仅允许微信/支付宝/招行官方域名 |
-| 解压密码写进日志 | debug 打印密码 | 不记录密码 |
-| 配置里的密钥被提交 | 示例路径写死本机 | `config.yaml` 已 gitignore，只用 example |
-| 无体积限制 | 无 | 附件与解压上限 20MB |
+先准备配置文件：
 
-请仍只在本机运行，不要把 `config.yaml`、`data/` 推到公开仓库。
+```bash
+cp config.example.yaml config.yaml
+```
 
-## 流程
+Windows PowerShell：
 
-1. 手机把微信 / 支付宝 / 招行流水发到**专用邮箱**（用于个人对账）。
-2. 电脑运行 `python -m ledgerbox fetch` 拉取附件并解压，或把已下载文件放到 `inbox/`。
-3. `python -m ledgerbox import` 解析、去重、标记转账。
-4. `python -m ledgerbox report` 看这个月钱花在哪。
+```powershell
+Copy-Item config.example.yaml config.yaml
+```
 
-## 安装
+编辑 `config.yaml`，填写 IMAP 邮箱和授权码。Docker Compose 会在容器内监听 `0.0.0.0:8765`，但默认只发布到宿主机 `127.0.0.1:8765`，因此局域网和公网默认无法直接访问。
+
+启动：
+
+```bash
+docker compose up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+docker compose logs -f ledgerbox
+```
+
+打开：
+
+```text
+http://127.0.0.1:8765/
+```
+
+Compose 默认 API Token 为：
+
+```text
+local-dev-token
+```
+
+第一次打开 Dashboard 时，在「访问设置」里填这个 Token 即可。更推荐在项目目录创建 `.env`：
+
+```env
+LEDGERBOX_API_TOKEN=换成你自己的随机长字符串
+```
+
+再重新启动：
+
+```bash
+docker compose up -d
+```
+
+SQLite 和账单附件不会存在容器临时层，而是保存在 Docker named volumes：
+
+```text
+ledgerbox_data
+ledgerbox_inbox
+```
+
+因此重新 build / 删除容器不会自动丢账本。停止服务：
+
+```bash
+docker compose down
+```
+
+如果明确连数据也要删除：
+
+```bash
+docker compose down -v
+```
+
+> `down -v` 会删除 SQLite 和已下载账单，请谨慎使用。
+
+Docker 运行时支持：
+
+```text
+LEDGERBOX_ROOT=/var/lib/ledgerbox
+LEDGERBOX_CONFIG=/etc/ledgerbox/config.yaml
+LEDGERBOX_API_TOKEN=...
+```
+
+## Python 本地安装
+
+如果不使用 Docker：
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 cp config.example.yaml config.yaml
-# 编辑 config.yaml：邮箱 IMAP 授权码、解压密码（可留空，运行时输入）
 ```
 
-## 命令
+然后编辑 `config.yaml`，配置邮箱 IMAP 授权码。
+
+> 邮箱请使用授权码 / 应用专用密码，不要填写邮箱登录密码。
+
+## 推荐使用方式
+
+### 1. iPhone 申请账单
+
+当你想看阶段性总结时，在手机上分别申请：
+
+**微信**  
+我 → 服务 → 钱包 → 账单 → 下载账单 → 用于个人对账 → 填专用邮箱。
+
+**支付宝**  
+我的 → 账单 → 开具交易流水证明 → 用于个人对账 → 填专用邮箱。
+
+**招商银行**  
+手机银行 → 流水打印 / 收支明细 → 填同一邮箱。
+
+### 2. 启动 Dashboard
+
+Python 方式：
 
 ```bash
-# 从邮箱拉取最近账单（需在 config.yaml 填 IMAP）
+python -m ledgerbox api
+```
+
+Docker 方式已经由 `docker compose up -d` 启动。
+
+默认地址：
+
+```text
+http://127.0.0.1:8765/
+```
+
+打开以后可以直接：
+
+- 查看当月支出 / 收入 / 净额 / 内部转移
+- 查看分类支出和每日支出
+- 浏览真实账本流水
+- 查看最近导入邮件
+- 查看等待密码或失败的账单
+- 点击「检查新账单」执行一次完整邮箱同步
+- 对 `waiting_password` 的 ZIP 直接输入密码并继续导入
+
+不再需要额外的 React 前端项目，也不再使用浏览器 `localStorage` 保存账本。
+
+## 一键同步
+
+如果你只想通过 CLI：
+
+```bash
+python -m ledgerbox sync
+```
+
+Docker 中也可以执行：
+
+```bash
+docker compose exec ledgerbox python -m ledgerbox sync
+```
+
+执行：
+
+```text
+邮箱检查
+  ↓
+新邮件去重
+  ↓
+附件下载 / SHA-256 去重
+  ↓
+ZIP 解压
+  ↓
+解析
+  ↓
+内部转账匹配
+  ↓
+分类
+  ↓
+SQLite
+  ↓
+生成本月 Markdown 报告
+```
+
+重复运行是安全的。
+
+## ZIP 密码
+
+账单 ZIP 没有可用密码时不会阻塞同步，而会保存为：
+
+```text
+waiting_password
+```
+
+可以在 Dashboard 直接填写密码，也可以使用 CLI：
+
+```bash
+python -m ledgerbox status
+python -m ledgerbox unlock a1b2c3d4e5f6
+```
+
+Docker：
+
+```bash
+docker compose exec ledgerbox python -m ledgerbox status
+docker compose exec ledgerbox python -m ledgerbox unlock a1b2c3d4e5f6
+```
+
+CLI 默认隐藏密码输入，避免密码进入 shell history。
+
+## Dashboard / API 配置
+
+Python 本机运行默认：
+
+```yaml
+api:
+  host: 127.0.0.1
+  port: 8765
+  token: ""
+```
+
+如果只在账本所在电脑访问，保持默认即可。
+
+Docker Compose 会通过命令行覆盖监听地址为 `0.0.0.0`，并通过 `LEDGERBOX_API_TOKEN` 提供 Token；宿主机端口仍默认只绑定 `127.0.0.1`。
+
+如果需要从 iPhone 或其他设备访问服务器上的 Dashboard，可以改为：
+
+```yaml
+api:
+  host: 0.0.0.0
+  port: 8765
+  token: "请使用高强度随机值"
+```
+
+LedgerBox 对非 loopback 监听会强制要求 Token，也可以通过 `LEDGERBOX_API_TOKEN` 设置。
+
+**不建议把 `http://服务器IP:8765` 直接裸露到公网。** 推荐放在 HTTPS 反向代理、VPN 或 Tailscale 后面。
+
+当配置了 Token，Dashboard 的「访问设置」可在当前浏览器会话中填写。Token 仅存在 `sessionStorage`，关闭会话后不会作为账本数据持久化。
+
+## HTTP 接口
+
+只读：
+
+```text
+GET /health
+GET /api/summary?month=2026-08
+GET /api/transactions?month=2026-08&limit=50&offset=0
+GET /api/imports?limit=50
+GET /api/pending
+```
+
+操作：
+
+```text
+POST /api/sync
+POST /api/unlock
+```
+
+`/api/unlock` 请求：
+
+```json
+{
+  "sha256": "a1b2c3d4e5f6...",
+  "password": "账单解压密码"
+}
+```
+
+Web 写操作有单实例锁；如果另一个同步 / 解锁正在执行，会返回冲突状态，避免重复并发处理同一批附件。
+
+API 不返回：
+
+- IMAP 授权码
+- ZIP 配置密码
+- 附件本地绝对路径
+- Dashboard 不需要的邮件发件人字段
+
+## 内部转账规则
+
+只有满足配对条件才记为「内部转移」：
+
+- 对方命中 `transfers.keywords`
+- 类型 / 描述含转账、充值、提现、转入、转出等
+- 金额相同
+- 时间差在配置窗口内，默认 48 小时
+- 不同平台
+- 收支方向相反
+
+这样不会仅凭“支付宝”“微信”等单个关键词把普通消费误标成内部转账。
+
+## 数据状态
+
+SQLite 主要包含：
+
+```text
+transactions
+mail_imports
+attachments
+```
+
+`mail_imports` 保存邮件处理状态；`attachments` 保存附件 hash 和处理状态，因此程序重启后仍能知道哪些账单已经处理、哪些还在等密码。
+
+## 其他命令
+
+```bash
+# 只拉新附件
 python -m ledgerbox fetch
 
-# 导入 inbox/ 或指定文件
+# 手动导入
 python -m ledgerbox import
 python -m ledgerbox import path/to/微信支付账单.xlsx
+
+# 状态
+python -m ledgerbox status
 
 # 月报
 python -m ledgerbox report
 python -m ledgerbox report --month 2026-08
 ```
 
-## 导出路径（发到同一邮箱）
+## 安全处理
 
-**微信**  
-我 → 服务 → 钱包 → 账单 → 下载账单 → **用于个人对账** → 填邮箱。解压密码在微信支付服务通知。
+相对原始账单采集思路，本项目额外处理了：
 
-**支付宝**  
-我的 → 账单 → 开具交易流水证明 → **用于个人对账** → 填邮箱。
+- SQL 参数化
+- Zip Slip 路径校验
+- 官方下载域名白名单
+- 附件 / 解压 20MB 上限
+- 密码不写日志
+- `config.yaml`、`data/`、`inbox/` 不提交 Git
+- 附件与邮件双层去重
+- 非本机 Dashboard 强制 Token
+- POST 操作串行化
+- HTTP 响应不返回内部异常堆栈
+- Docker 默认仅把端口发布到宿主机 `127.0.0.1`
 
-**招商银行**  
-手机银行 → 流水打印 / 收支明细 → 填邮箱。提取码在申请记录。
-
-## 内部转账规则
-
-同时满足则记为「内部转移」，不计入净收支：
-
-- 对方含：支付宝、微信支付、微信零钱、余额宝、招商银行、招行、储蓄卡 等
-- 类型含：转账、充值、提现、转入、转出
-- 金额相同、时间差在配置的窗口内（默认 48 小时）的配对流水会互相抵消
-
-可在 `config.yaml` 的 `transfers.keywords` 自行增删。
+仍建议只部署在自己可信的机器 / 服务器上。
 
 ## 致谢
 
-- [edge-sky/Bills-save](https://github.com/edge-sky/Bills-save)（MPL-2.0）邮箱拉取思路
-- [aker-pc/BSync](https://github.com/aker-pc/BSync) 解析与归档流程
+- `edge-sky/Bills-save`：邮箱账单采集思路
+- `aker-pc/BSync`：解析与归档流程参考
 
-本仓库代码为重写，不以复制原文件的方式分发。
+本仓库代码为重写实现。
 
-## 许可
+## License
 
-Mozilla Public License 2.0（与 Bills-save 兼容）
+Mozilla Public License 2.0

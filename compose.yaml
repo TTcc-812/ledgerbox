@@ -1,0 +1,33 @@
+services:
+  ledgerbox:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ledgerbox
+    restart: unless-stopped
+    environment:
+      LEDGERBOX_ROOT: /var/lib/ledgerbox
+      LEDGERBOX_CONFIG: /etc/ledgerbox/config.yaml
+      LEDGERBOX_API_TOKEN: ${LEDGERBOX_API_TOKEN:-local-dev-token}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./config.yaml:/etc/ledgerbox/config.yaml:ro
+      - ledgerbox_data:/var/lib/ledgerbox/data
+      - ledgerbox_inbox:/var/lib/ledgerbox/inbox
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ledgerbox_data:
+  ledgerbox_inbox:
